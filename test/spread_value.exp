@@ -1,0 +1,30 @@
+#!/usr/bin/expect -f
+
+# This is an expect script. I really shouldn't have done this, but I found that
+# ./robert_test.py did funny things when run through grep. I guessed that there
+# must be some tty dependency (?)... but this fixed it.
+#
+# If you are running this, install expect (which will install Tcl).
+# You can modify the --data-file .... part too.
+
+set NUMBER_OF_TRIALS 10
+set accuracy {}
+set sum 0.0
+for {set i 0} {$i < $NUMBER_OF_TRIALS} {incr i} {
+    spawn ./robert_test.py --data-file /Users/gregb/Documents/devel/iicff/front_summary.csv --skip-image  --random-seed $i
+    log_user 0
+    expect {
+	-re "Accuracy score on holdout data = *(\[0-9.\]+)" {
+	    puts "Accuracy ---> $expect_out(1,string)"
+	    lappend accuracy $expect_out(1,string)
+	    set sum [expr $sum + $expect_out(1,string)]
+	}
+    }
+    expect eof
+    log_user 1
+}
+
+puts "Here are the accuracies..."
+puts "$accuracy"
+puts "----"
+puts [expr $sum / $NUMBER_OF_TRIALS]

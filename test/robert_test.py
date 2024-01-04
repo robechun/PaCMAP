@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from refactored import PaCMAP
 import pandas
 import sys
@@ -11,10 +13,22 @@ from scipy.optimize import linear_sum_assignment
 import os
 import sklearn.pipeline
 import sklearn.linear_model
+import sklearn.neighbors
+import sklearn.metrics
 import time
 import sqlite3
 import sklearn.cluster
 from openai import OpenAI
+import argparse
+import os
+
+# Let's have command-line arguments so that we can run this repeatedly with
+# different options.
+parser = argparse.ArgumentParser()
+parser.add_argument("--data-file", default=os.path.expanduser("~/Downloads/front_summary.csv"))
+parser.add_argument("--skip-image", action="store_true", help="Don't bother with an image")
+parser.add_argument("--random-seed", type=int, default=42, help="Reproducibility key")
+args = parser.parse_args()
 
 client = OpenAI(
     # This is the default and can be omitted
@@ -22,8 +36,8 @@ client = OpenAI(
 )
 
 # --- LOAD DATA ---
-front_support_categories = pandas.read_csv(
-    "~/Downloads/front_summary.csv", na_filter=False
+front_support_categories = pandas.read_csv(args.data_file,
+                                           na_filter=False
 )
 front_support_categories = front_support_categories[
     front_support_categories.tag_id.str.startswith("tag_")
@@ -121,7 +135,7 @@ tag_series = front_support_categories.tag_id
 # filter tag called slnib (no support action needed)
 tag_series = tag_series[tag_series != "tag_slnib"]
 
-target_tags = set(tag_series.value_counts().nlargest(10).index)
+target_tags = set(tag_series.value_counts().nlargest(TOP_N_TAGS).index)
 
 random_selection = []
 random_selection_validation = []
@@ -129,7 +143,7 @@ for tag in target_tags:
     filtered_tags = tag_series[tag_series == tag]
     sampled = list(
         tag_series[tag_series == tag]
-        .sample(NUMBER_OF_SAMPLES_PER_TAG, random_state=42)
+        .sample(NUMBER_OF_SAMPLES_PER_TAG, random_state=args.random_seed)
         .index
     )
 
@@ -144,6 +158,7 @@ filtered_front_support_categories_validation = front_support_categories.iloc[
     random_selection_validation
 ]
 
+
 # ----------------------
 
 robert_X = numpy.array(list(filtered_front_support_categories.embedding))
@@ -153,6 +168,7 @@ robert_validation_y = filtered_front_support_categories_validation.tag_id
 # robert_target_y = robert_target_y.apply(lambda x: x[4:])
 
 # reset the index TODO idk if this is right lol -> am i actually making sure the order / index is same as robert_X?
+# GregB... not even sure it is necessary. What are we trying to fix?
 robert_target_y.index = range(len(robert_target_y))
 
 # robert_y = valid_targets_series.loc[random_selection]
@@ -161,7 +177,7 @@ robert_target_y.index = range(len(robert_target_y))
 pacmapper = PaCMAP(n_components=2, verbose=True)
 
 robert_2d_pacmap = pacmapper.fit_transform(X=robert_X, y=robert_target_y)
-robert_2d_pacmap = pandas.DataFrame(robert_2d_pacmap, columns=["x0", "x1"])
+robert_2d_pacmap = pandas.DataFrame(robert_2d_pacmap, columns=["x0", "x1"], index=robert_target_y.index)
 
 
 robert_X_validation = numpy.array(
@@ -169,23 +185,46 @@ robert_X_validation = numpy.array(
 )
 
 robert_X_df_holdout_e = pacmapper.transform(X=robert_X_validation, basis=robert_X)
-robert_X_df_holdout_e = pandas.DataFrame(robert_X_df_holdout_e, columns=["x0", "x1"])
+robert_X_df_holdout_e = pandas.DataFrame(robert_X_df_holdout_e, columns=["x0", "x1"], index=robert_validation_y.index)
 
 
-fig, ax = plt.subplots()
+if not args.skip_image:
+    fig, ax = plt.subplots()
 
-robert_2d_pacmap.plot.scatter(
-    x="x0", y="x1", c=[tag2id_lookup[x] for x in robert_target_y], cmap="rainbow", ax=ax
-)
+    cmap = plt.colormaps['tab10']  # Get 10 distinct colors
+    colours = cmap(range(10))
+    print(colours)
+    
+    tag_colour = {}
+    for c,tag in zip(colours, robert_target_y.unique()):
+        tag_colour[tag] = c
+        print(f"Using color={c} for the colour of {tag}")
+        robert_2d_pacmap[robert_target_y == tag].plot.scatter(
+            x="x0", y="x1", color=c,
+            label=tag,
+            ax=ax,
+            #s=10
+        )
 
-# TODO idk if this is actually right in terms of the color being the same as above.
-# I think it's right...
-robert_X_df_holdout_e.plot.scatter(
-    x="x0",
-    y="x1",
-    c=[tag2id_lookup[x] for x in robert_validation_y],
-    cmap="rainbow",
-    ax=ax,
-)
+    for tag in robert_validation_y.unique():
+        c = tag_colour.get(tag, "black")
+        robert_X_df_holdout_e[robert_validation_y == tag].plot.scatter(
+            x="x0",
+            y="x1",
+            color=c,
+            ax=ax,
+            marker="+",
+            #s=1
+        )
 
-plt.show()
+    ax.legend()
+    plt.show()
+
+
+nn = sklearn.neighbors.KNeighborsClassifier(n_neighbors=TOP_N_TAGS)
+nn.fit(robert_2d_pacmap, robert_target_y)
+# We should get 100% on the training data
+print("Accuracy score on training data = ", sklearn.metrics.accuracy_score(robert_target_y, nn.predict(robert_2d_pacmap)))
+
+print("Accuracy score on holdout data = ", sklearn.metrics.accuracy_score(robert_validation_y, nn.predict(robert_X_df_holdout_e)))
+
