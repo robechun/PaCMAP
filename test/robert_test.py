@@ -221,7 +221,7 @@ if not args.skip_image:
     plt.show()
 
 
-nn = sklearn.neighbors.KNeighborsClassifier(n_neighbors=TOP_N_TAGS)
+nn = sklearn.neighbors.KNeighborsClassifier()
 nn.fit(robert_2d_pacmap, robert_target_y)
 # We should get 100% on the training data
 print("Accuracy score on training data = ", sklearn.metrics.accuracy_score(robert_target_y, nn.predict(robert_2d_pacmap)))
